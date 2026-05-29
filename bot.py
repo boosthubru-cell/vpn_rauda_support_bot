@@ -10,17 +10,18 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 
-TOKEN = "8551024830:AAGJ3oikXbKBrzEQ-ge13wUJTNanEllK1Tk"
-ADMIN_ID = 6852628550
+from environs import Env
 
-DB = "support.db"
+env = Env()
+env.read_env()
+
+BOT_TOKEN = env("BOT_TOKEN")
+BOT_ADMIN_ID = env.int("BOT_ADMIN_ID")
+DB_NAME = env("DB_NAME")
 
 
 # ---------------- BOT ----------------
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 dp = Dispatcher()
 
@@ -32,7 +33,7 @@ class AdminState(StatesGroup):
 
 # ---------------- DB ----------------
 async def init_db():
-    async with aiosqlite.connect(DB) as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
         CREATE TABLE IF NOT EXISTS tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,8 +50,7 @@ async def init_db():
 @dp.message(CommandStart())
 async def start(message: types.Message):
     sent = await message.answer(
-        "👋 Поддержка онлайн\n\n"
-        "Отправьте сообщение или фото с описанием проблемы."
+        "👋 Поддержка онлайн\n\nОтправьте сообщение или фото с описанием проблемы."
     )
 
     # удаление приветствия через 30 сек
@@ -63,16 +63,16 @@ async def start(message: types.Message):
 
 
 # ---------------- USER MESSAGE / PHOTO ----------------
-@dp.message(F.from_user.id != ADMIN_ID)
+@dp.message(F.from_user.id != BOT_ADMIN_ID)
 async def user_message(message: types.Message):
 
     text = message.text or message.caption or "Без текста"
 
     # сохраняем тикет
-    async with aiosqlite.connect(DB) as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             "INSERT INTO tickets (user_id, username, message) VALUES (?, ?, ?)",
-            (message.from_user.id, message.from_user.username, text)
+            (message.from_user.id, message.from_user.username, text),
         )
         ticket_id = cursor.lastrowid
         await db.commit()
@@ -81,8 +81,7 @@ async def user_message(message: types.Message):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💬 Ответить",
-                    callback_data=f"reply_{ticket_id}"
+                    text="💬 Ответить", callback_data=f"reply_{ticket_id}"
                 )
             ]
         ]
@@ -97,29 +96,18 @@ async def user_message(message: types.Message):
 
     # ---------- PHOTO ----------
     if message.photo:
-
         largest_photo = message.photo[-1].file_id
 
         await bot.send_photo(
-            ADMIN_ID,
-            photo=largest_photo,
-            caption=caption,
-            reply_markup=kb
+            BOT_ADMIN_ID, photo=largest_photo, caption=caption, reply_markup=kb
         )
 
     # ---------- TEXT ----------
     else:
-
-        await bot.send_message(
-            ADMIN_ID,
-            caption,
-            reply_markup=kb
-        )
+        await bot.send_message(BOT_ADMIN_ID, caption, reply_markup=kb)
 
     # ---------- USER SUCCESS MESSAGE ----------
-    sent_message = await message.answer(
-        "📨 Сообщение отправлено в поддержку"
-    )
+    sent_message = await message.answer("📨 Сообщение отправлено в поддержку")
 
     # ждём 30 секунд
     await asyncio.sleep(30)
@@ -140,15 +128,14 @@ async def user_message(message: types.Message):
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_callback(callback: types.CallbackQuery, state: FSMContext):
 
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id != BOT_ADMIN_ID:
         return
 
     ticket_id = int(callback.data.split("_")[1])
 
-    async with aiosqlite.connect(DB) as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "SELECT user_id FROM tickets WHERE id=?",
-            (ticket_id,)
+            "SELECT user_id FROM tickets WHERE id=?", (ticket_id,)
         )
         row = await cursor.fetchone()
 
@@ -168,7 +155,7 @@ async def reply_callback(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ---------------- SEND ANSWER ----------------
-@dp.message(AdminState.waiting_answer, F.from_user.id == ADMIN_ID)
+@dp.message(AdminState.waiting_answer, F.from_user.id == BOT_ADMIN_ID)
 async def send_answer(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
@@ -180,10 +167,7 @@ async def send_answer(message: types.Message, state: FSMContext):
         return
 
     try:
-        await bot.send_message(
-            user_id,
-            f"📩 <b>Ответ поддержки:</b>\n\n{message.text}"
-        )
+        await bot.send_message(user_id, f"📩 <b>Ответ поддержки:</b>\n\n{message.text}")
 
         success = await message.answer("✅ Ответ отправлен")
 
